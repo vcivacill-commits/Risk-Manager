@@ -79,9 +79,9 @@ class KuCoinFuturesData:
     def get_klines(self, symbol: str, granularity: int = 3600, limit: int = 100) -> pd.DataFrame:
         kucoin_symbol = self._normalize_symbol(symbol)
         candles = self.client.get_kline_data(
-            symbol=kucoin_symbol, granularity=granularity, begin=None, end=None
+            symbol=kucoin_symbol, granularity=granularity, begin_t=None, end_t=None
         )
-        df = pd.DataFrame(candles, columns=["timestamp", "open", "close", "high", "low", "volume"])
+        df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df = df.astype(float)
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         return df.sort_values("timestamp").reset_index(drop=True)
