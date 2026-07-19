@@ -29,6 +29,7 @@ DEFAULT_ATR_MULTIPLIER_SL = 1.5
 DEFAULT_ATR_MULTIPLIER_TP = 3.0
 MIN_RR_RATIO = 1.5
 MAX_LEVERAGE = 125
+ACCOUNT_SIZE_USD = float(os.getenv("ACCOUNT_SIZE_USD", "10000"))
 
 
 @dataclass
@@ -175,7 +176,7 @@ class RiskEngine:
         safe_leverages = [1, 2, 3, 5, 10, 15, 20, 25, 30, 50, 75, 100, 125]
         leverage = max([l for l in safe_leverages if l <= leverage], default=1)
 
-        account_size = 10000
+        account_size = ACCOUNT_SIZE_USD
         position_size_multiplier = risk_percent / (sl_distance_percent * leverage)
         position_size_usd = account_size * position_size_multiplier
 
