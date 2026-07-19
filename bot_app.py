@@ -29,7 +29,6 @@ DEFAULT_ATR_MULTIPLIER_SL = 1.5
 DEFAULT_ATR_MULTIPLIER_TP = 3.0
 MIN_RR_RATIO = 1.5
 MAX_LEVERAGE = 125
-ACCOUNT_SIZE_USD = float(os.getenv("ACCOUNT_SIZE_USD", "10000"))
 
 
 @dataclass
@@ -40,9 +39,12 @@ class TradeSetup:
     stop_loss: float
     take_profit: float
     atr: float
+    account_balance: float
     risk_percent: float
+    risk_amount_usd: float
     leverage: int
     position_size_usd: float
+    actual_loss_if_sl_hit: float
     rr_ratio: float
     sl_distance_percent: float
 
@@ -60,15 +62,18 @@ class TradeSetup:
 └─ ATR (14):        <code>{self.atr:,.8f}</code>
 
 ⚡ <b>RISK MANAGEMENT</b>
-├─ Account Risk:    <code>{self.risk_percent}%</code>
+├─ Account Balance: <code>${self.account_balance:,.2f}</code>
+├─ Account Risk:    <code>{self.risk_percent}%</code> (<code>${self.risk_amount_usd:,.2f}</code>)
 ├─ SL Distance:     <code>{self.sl_distance_percent:.2f}%</code>
 ├─ Recommended Lev: <code>{self.leverage}×</code>
 ├─ Position Size:   <code>${self.position_size_usd:,.2f}</code>
+├─ Loss if SL hit:  <code>${self.actual_loss_if_sl_hit:,.2f}</code>
 └─ R:R Ratio:       <code>1:{self.rr_ratio:.2f}</code>
 
 💡 <b>FORMULA USED</b>
 <code>Leverage = Risk% / SL Distance%</code>
 <code>{self.leverage}× = {self.risk_percent}% / {self.sl_distance_percent:.2f}%</code>
+<i>Position uses your full account balance as margin; leverage is rounded down to the nearest safe tier, so actual loss if stopped out is at or below your target risk.</i>
 
 ⚠️ <i>Always use isolated margin and verify levels before entering.</i>"""
 
@@ -130,6 +135,7 @@ class RiskEngine:
         symbol: str,
         direction: str,
         entry_price: float,
+        account_balance: float,
         risk_percent: float = DEFAULT_RISK_PERCENT,
         timeframe: str = "1h",
     ) -> TradeSetup:
@@ -176,9 +182,12 @@ class RiskEngine:
         safe_leverages = [1, 2, 3, 5, 10, 15, 20, 25, 30, 50, 75, 100, 125]
         leverage = max([l for l in safe_leverages if l <= leverage], default=1)
 
-        account_size = ACCOUNT_SIZE_USD
-        position_size_multiplier = risk_percent / (sl_distance_percent * leverage)
-        position_size_usd = account_size * position_size_multiplier
+        # Position sizing: with the full account balance used as margin, this
+        # leverage is exactly the one that makes a stop-loss hit cost precisely
+        # `risk_percent` of the account. Notional exposure = balance × leverage.
+        risk_amount_usd = account_balance * (risk_percent / 100)
+        position_size_usd = account_balance * leverage
+        actual_loss_if_sl_hit = position_size_usd * (sl_distance_percent / 100)
 
         tp_distance = abs(take_profit - entry_price)
         rr_ratio = tp_distance / sl_distance if sl_distance > 0 else 0
@@ -190,9 +199,12 @@ class RiskEngine:
             stop_loss=round(stop_loss, 8),
             take_profit=round(take_profit, 8),
             atr=round(atr, 8),
+            account_balance=round(account_balance, 2),
             risk_percent=risk_percent,
+            risk_amount_usd=round(risk_amount_usd, 2),
             leverage=leverage,
             position_size_usd=round(position_size_usd, 2),
+            actual_loss_if_sl_hit=round(actual_loss_if_sl_hit, 2),
             rr_ratio=round(rr_ratio, 2),
             sl_distance_percent=round(sl_distance_percent, 4),
         )
@@ -247,6 +259,7 @@ def get_timeframe_keyboard() -> InlineKeyboardMarkup:
 class TradeStates(StatesGroup):
     waiting_for_symbol = State()
     waiting_for_entry = State()
+    waiting_for_balance = State()
     waiting_for_risk = State()
 
 
@@ -268,7 +281,7 @@ def register_handlers():
         await state.clear()
         await state.set_state(TradeStates.waiting_for_symbol)
         await message.answer(
-            "📊 <b>Step 1/4:</b> Enter the cryptocurrency symbol.\n\n"
+            "📊 <b>Step 1/5:</b> Enter the cryptocurrency symbol.\n\n"
             "Examples: <code>BTC</code>, <code>ETH</code>, <code>SOL</code>",
             parse_mode="HTML"
         )
@@ -286,7 +299,7 @@ def register_handlers():
             price_text = ""
         await message.answer(
             f"✅ Symbol: <b>{symbol}</b>{price_text}\n\n"
-            f"📊 <b>Step 2/4:</b> Select direction:",
+            f"📊 <b>Step 2/5:</b> Select direction:",
             parse_mode="HTML",
             reply_markup=get_direction_keyboard()
         )
@@ -298,7 +311,7 @@ def register_handlers():
         await state.set_state(TradeStates.waiting_for_entry)
         await callback.message.edit_text(
             f"✅ Direction: <b>{direction}</b>\n\n"
-            f"📊 <b>Step 3/4:</b> Enter your entry price:\n"
+            f"📊 <b>Step 3/5:</b> Enter your entry price:\n"
             f"(Or type <code>market</code> for current price)",
             parse_mode="HTML"
         )
@@ -323,10 +336,28 @@ def register_handlers():
                 await message.answer("❌ Invalid price. Enter a numeric value.")
                 return
         await state.update_data(entry_price=entry_price)
-        await state.set_state(TradeStates.waiting_for_risk)
+        await state.set_state(TradeStates.waiting_for_balance)
         await message.answer(
             f"✅ Entry: <code>{entry_price:,.8f}</code>\n\n"
-            f"📊 <b>Step 4/4:</b> Select risk % per trade:",
+            f"📊 <b>Step 4/5:</b> Enter your account balance (USD):\n"
+            f"(e.g. <code>10000</code>)",
+            parse_mode="HTML"
+        )
+
+    @dp.message(TradeStates.waiting_for_balance)
+    async def process_balance(message: Message, state: FSMContext):
+        try:
+            account_balance = float(message.text.strip().replace(",", ""))
+            if account_balance <= 0:
+                raise ValueError
+        except ValueError:
+            await message.answer("❌ Invalid balance. Enter a positive numeric value, e.g. 10000")
+            return
+        await state.update_data(account_balance=account_balance)
+        await state.set_state(TradeStates.waiting_for_risk)
+        await message.answer(
+            f"✅ Balance: <code>${account_balance:,.2f}</code>\n\n"
+            f"📊 <b>Step 5/5:</b> Select risk % per trade:",
             parse_mode="HTML",
             reply_markup=get_risk_keyboard()
         )
@@ -381,6 +412,7 @@ def register_handlers():
                 symbol=data["symbol"],
                 direction=data["direction"],
                 entry_price=data["entry_price"],
+                account_balance=data["account_balance"],
                 risk_percent=data["risk_percent"],
                 timeframe=timeframe,
             )
