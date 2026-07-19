@@ -89,15 +89,15 @@ class KuCoinFuturesData:
     def _normalize_symbol(self, symbol: str) -> str:
         symbol = symbol.upper().replace("/", "").replace("-", "")
         mappings = {
-            "BTC": "XBTUSDM", "ETH": "ETHUSDM", "SOL": "SOLUSDM",
-            "XRP": "XRPUSDM", "DOGE": "DOGEUSDM", "ADA": "ADAUSDM",
-            "AVAX": "AVAXUSDM", "LINK": "LINKUSDM", "MATIC": "MATICUSDM",
-            "DOT": "DOTUSDM",
+            "BTC": "XBTUSDTM", "ETH": "ETHUSDTM", "SOL": "SOLUSDTM",
+            "XRP": "XRPUSDTM", "DOGE": "DOGEUSDTM", "ADA": "ADAUSDTM",
+            "AVAX": "AVAXUSDTM", "LINK": "LINKUSDTM", "MATIC": "MATICUSDTM",
+            "DOT": "DOTUSDTM",
         }
         if symbol.endswith("USDM") or symbol.endswith("USDTM"):
             return symbol
         base = symbol.replace("USDT", "").replace("USD", "")
-        return mappings.get(base, f"{base}USDM")
+        return mappings.get(base, f"{base}USDTM")
 
     def get_ticker(self, symbol: str) -> Dict[str, Any]:
         return self.client.get_ticker(self._normalize_symbol(symbol))
@@ -132,8 +132,8 @@ class RiskEngine:
         risk_percent: float = DEFAULT_RISK_PERCENT,
         timeframe: str = "1h",
     ) -> TradeSetup:
-        tf_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
-        granularity = tf_map.get(timeframe, 3600)
+        tf_map = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+        granularity = tf_map.get(timeframe, 60)
 
         df = self.kucoin.get_klines(symbol, granularity=granularity, limit=100)
         atr = self.analyzer.calculate_atr(df, period=14)
