@@ -20,6 +20,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from kucoin_futures.client import Market as FuturesMarket
 
+from locales import t, direction_label, DEFAULT_LANG, SUPPORTED_LANGS, LANG_NAMES
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,16 @@ DEFAULT_ATR_MULTIPLIER_SL = 1.5
 DEFAULT_ATR_MULTIPLIER_TP = 3.0
 MIN_RR_RATIO = 1.5
 MAX_LEVERAGE = 125
+
+# Per-user language preference. Kept separate from the trade FSM state so it
+# survives state.clear() calls (e.g. /start, /newtrade). Note: like the trade
+# flow's own FSM storage, this is in-memory only and resets on a serverless
+# cold start; there's no persistent DB in this project yet.
+user_languages: Dict[int, str] = {}
+
+
+def get_lang(user_id: int) -> str:
+    return user_languages.get(user_id, DEFAULT_LANG)
 
 
 @dataclass
@@ -48,34 +60,26 @@ class TradeSetup:
     rr_ratio: float
     sl_distance_percent: float
 
-    def format_recommendation(self) -> str:
+    def format_recommendation(self, lang: str = DEFAULT_LANG) -> str:
         emoji = "🟢" if self.direction == "LONG" else "🔴"
-        return f"""{emoji} <b>TRADE RECOMMENDATION</b> {emoji}
-
-<b>Symbol:</b> <code>{self.symbol}</code>
-<b>Direction:</b> <code>{self.direction}</code>
-
-📊 <b>PRICE LEVELS</b>
-├─ Entry Price:     <code>{self.entry_price:,.8f}</code>
-├─ Stop Loss:       <code>{self.stop_loss:,.8f}</code>
-├─ Take Profit:     <code>{self.take_profit:,.8f}</code>
-└─ ATR (14):        <code>{self.atr:,.8f}</code>
-
-⚡ <b>RISK MANAGEMENT</b>
-├─ Account Balance: <code>${self.account_balance:,.2f}</code>
-├─ Account Risk:    <code>{self.risk_percent}%</code> (<code>${self.risk_amount_usd:,.2f}</code>)
-├─ SL Distance:     <code>{self.sl_distance_percent:.2f}%</code>
-├─ Recommended Lev: <code>{self.leverage}×</code>
-├─ Position Size:   <code>${self.position_size_usd:,.2f}</code>
-├─ Loss if SL hit:  <code>${self.actual_loss_if_sl_hit:,.2f}</code>
-└─ R:R Ratio:       <code>1:{self.rr_ratio:.2f}</code>
-
-💡 <b>FORMULA USED</b>
-<code>Leverage = Risk% / SL Distance%</code>
-<code>{self.leverage}× = {self.risk_percent}% / {self.sl_distance_percent:.2f}%</code>
-<i>Position uses your full account balance as margin; leverage is rounded down to the nearest safe tier, so actual loss if stopped out is at or below your target risk.</i>
-
-⚠️ <i>Always use isolated margin and verify levels before entering.</i>"""
+        return t(
+            lang, "rec_template",
+            emoji=emoji,
+            symbol=self.symbol,
+            direction=direction_label(lang, self.direction),
+            entry_price=self.entry_price,
+            stop_loss=self.stop_loss,
+            take_profit=self.take_profit,
+            atr=self.atr,
+            account_balance=self.account_balance,
+            risk_percent=self.risk_percent,
+            risk_amount_usd=self.risk_amount_usd,
+            sl_distance_percent=self.sl_distance_percent,
+            leverage=self.leverage,
+            position_size_usd=self.position_size_usd,
+            actual_loss_if_sl_hit=self.actual_loss_if_sl_hit,
+            rr_ratio=self.rr_ratio,
+        )
 
 
 class KuCoinFuturesData:
@@ -219,16 +223,28 @@ def create_bot() -> Bot:
     return Bot(token=TELEGRAM_BOT_TOKEN)
 
 
-def get_direction_keyboard() -> InlineKeyboardMarkup:
+def get_language_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🟢 BUY / LONG", callback_data="dir:LONG"),
-            InlineKeyboardButton(text="🔴 SELL / SHORT", callback_data="dir:SHORT"),
+            InlineKeyboardButton(text="🇬🇧 English", callback_data="lang:en"),
+            InlineKeyboardButton(text="🇮🇷 فارسی", callback_data="lang:fa"),
         ]
     ])
 
 
-def get_risk_keyboard() -> InlineKeyboardMarkup:
+def get_direction_keyboard(lang: str) -> InlineKeyboardMarkup:
+    long_label = direction_label(lang, "LONG")
+    short_label = direction_label(lang, "SHORT")
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"🟢 {long_label}", callback_data="dir:LONG"),
+            InlineKeyboardButton(text=f"🔴 {short_label}", callback_data="dir:SHORT"),
+        ]
+    ])
+
+
+def get_risk_keyboard(lang: str) -> InlineKeyboardMarkup:
+    custom_label = t(lang, "risk_custom_btn")
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="1%", callback_data="risk:1"),
@@ -238,12 +254,14 @@ def get_risk_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="5%", callback_data="risk:5"),
             InlineKeyboardButton(text="10%", callback_data="risk:10"),
-            InlineKeyboardButton(text="Custom", callback_data="risk:custom"),
+            InlineKeyboardButton(text=custom_label, callback_data="risk:custom"),
         ]
     ])
 
 
 def get_timeframe_keyboard() -> InlineKeyboardMarkup:
+    # Timeframe abbreviations (15m/1h/4h/1d) are standard trading shorthand
+    # and are kept the same across languages.
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="15m", callback_data="tf:15m"),
@@ -264,61 +282,66 @@ class TradeStates(StatesGroup):
 
 
 def register_handlers():
+    @dp.message(Command("language"))
+    async def cmd_language(message: Message):
+        lang = get_lang(message.from_user.id)
+        await message.answer(t(lang, "lang_prompt"), reply_markup=get_language_keyboard())
+
+    @dp.callback_query(F.data.startswith("lang:"))
+    async def process_language(callback: CallbackQuery):
+        lang = callback.data.split(":")[1]
+        if lang not in SUPPORTED_LANGS:
+            lang = DEFAULT_LANG
+        user_languages[callback.from_user.id] = lang
+        await callback.message.edit_text(t(lang, "lang_set"), parse_mode="HTML")
+        await callback.answer()
+
     @dp.message(Command("start"))
     async def cmd_start(message: Message, state: FSMContext):
         await state.clear()
-        await message.answer(
-            "👋 <b>Welcome to the KuCoin Futures Risk Manager!</b>\n\n"
-            "I calculate optimal leverage, stop-loss, and take-profit using "
-            "ATR-based support/resistance from KuCoin Futures data.\n\n"
-            "<b>Formula:</b> <code>Leverage = Risk% / SL Distance%</code>\n\n"
-            "Use /newtrade to start.",
-            parse_mode="HTML"
-        )
+        lang = get_lang(message.from_user.id)
+        await message.answer(t(lang, "welcome"), parse_mode="HTML")
 
     @dp.message(Command("newtrade"))
     async def cmd_newtrade(message: Message, state: FSMContext):
         await state.clear()
+        lang = get_lang(message.from_user.id)
         await state.set_state(TradeStates.waiting_for_symbol)
-        await message.answer(
-            "📊 <b>Step 1/5:</b> Enter the cryptocurrency symbol.\n\n"
-            "Examples: <code>BTC</code>, <code>ETH</code>, <code>SOL</code>",
-            parse_mode="HTML"
-        )
+        await message.answer(t(lang, "step1_symbol"), parse_mode="HTML")
 
     @dp.message(TradeStates.waiting_for_symbol)
     async def process_symbol(message: Message, state: FSMContext):
+        lang = get_lang(message.from_user.id)
         symbol = message.text.strip().upper()
         await state.update_data(symbol=symbol)
         await state.set_state(TradeStates.waiting_for_entry)
         try:
             ticker = risk_engine.kucoin.get_ticker(symbol)
             current_price = float(ticker.get("price", 0))
-            price_text = f"\n\n📈 Current price: <code>{current_price:,.8f}</code>"
+            price_text = t(lang, "current_price", price=current_price)
         except Exception:
             price_text = ""
         await message.answer(
-            f"✅ Symbol: <b>{symbol}</b>{price_text}\n\n"
-            f"📊 <b>Step 2/5:</b> Select direction:",
+            t(lang, "step2_direction", symbol=symbol, price_text=price_text),
             parse_mode="HTML",
-            reply_markup=get_direction_keyboard()
+            reply_markup=get_direction_keyboard(lang)
         )
 
     @dp.callback_query(F.data.startswith("dir:"))
     async def process_direction(callback: CallbackQuery, state: FSMContext):
+        lang = get_lang(callback.from_user.id)
         direction = callback.data.split(":")[1]
         await state.update_data(direction=direction)
         await state.set_state(TradeStates.waiting_for_entry)
         await callback.message.edit_text(
-            f"✅ Direction: <b>{direction}</b>\n\n"
-            f"📊 <b>Step 3/5:</b> Enter your entry price:\n"
-            f"(Or type <code>market</code> for current price)",
+            t(lang, "step3_entry", direction=direction_label(lang, direction)),
             parse_mode="HTML"
         )
         await callback.answer()
 
     @dp.message(TradeStates.waiting_for_entry)
     async def process_entry(message: Message, state: FSMContext):
+        lang = get_lang(message.from_user.id)
         entry_text = message.text.strip().lower()
         data = await state.get_data()
         symbol = data["symbol"]
@@ -327,56 +350,51 @@ def register_handlers():
                 ticker = risk_engine.kucoin.get_ticker(symbol)
                 entry_price = float(ticker.get("price", 0))
             except:
-                await message.answer("❌ Could not fetch market price. Enter a specific price.")
+                await message.answer(t(lang, "market_price_fail"), parse_mode="HTML")
                 return
         else:
             try:
                 entry_price = float(entry_text)
             except ValueError:
-                await message.answer("❌ Invalid price. Enter a numeric value.")
+                await message.answer(t(lang, "invalid_price"), parse_mode="HTML")
                 return
         await state.update_data(entry_price=entry_price)
         await state.set_state(TradeStates.waiting_for_balance)
         await message.answer(
-            f"✅ Entry: <code>{entry_price:,.8f}</code>\n\n"
-            f"📊 <b>Step 4/5:</b> Enter your account balance (USD):\n"
-            f"(e.g. <code>10000</code>)",
+            t(lang, "step4_balance", entry_price=entry_price),
             parse_mode="HTML"
         )
 
     @dp.message(TradeStates.waiting_for_balance)
     async def process_balance(message: Message, state: FSMContext):
+        lang = get_lang(message.from_user.id)
         try:
             account_balance = float(message.text.strip().replace(",", ""))
             if account_balance <= 0:
                 raise ValueError
         except ValueError:
-            await message.answer("❌ Invalid balance. Enter a positive numeric value, e.g. 10000")
+            await message.answer(t(lang, "invalid_balance"), parse_mode="HTML")
             return
         await state.update_data(account_balance=account_balance)
         await state.set_state(TradeStates.waiting_for_risk)
         await message.answer(
-            f"✅ Balance: <code>${account_balance:,.2f}</code>\n\n"
-            f"📊 <b>Step 5/5:</b> Select risk % per trade:",
+            t(lang, "step5_risk", balance=account_balance),
             parse_mode="HTML",
-            reply_markup=get_risk_keyboard()
+            reply_markup=get_risk_keyboard(lang)
         )
 
     @dp.callback_query(F.data.startswith("risk:"))
     async def process_risk(callback: CallbackQuery, state: FSMContext):
+        lang = get_lang(callback.from_user.id)
         risk_input = callback.data.split(":")[1]
         if risk_input == "custom":
-            await callback.message.edit_text(
-                "📊 Enter custom risk % (e.g., <code>7.5</code>):",
-                parse_mode="HTML"
-            )
+            await callback.message.edit_text(t(lang, "custom_risk_prompt"), parse_mode="HTML")
             await callback.answer()
             return
         risk_percent = float(risk_input)
         await state.update_data(risk_percent=risk_percent)
         await callback.message.edit_text(
-            f"✅ Risk: <b>{risk_percent}%</b>\n\n"
-            f"📊 Select timeframe for ATR calculation:",
+            t(lang, "risk_selected_timeframe", risk=risk_percent),
             parse_mode="HTML",
             reply_markup=get_timeframe_keyboard()
         )
@@ -384,27 +402,28 @@ def register_handlers():
 
     @dp.message(TradeStates.waiting_for_risk)
     async def process_custom_risk(message: Message, state: FSMContext):
+        lang = get_lang(message.from_user.id)
         try:
             risk_percent = float(message.text.strip())
             if not (0.1 <= risk_percent <= 100):
                 raise ValueError
         except ValueError:
-            await message.answer("❌ Enter a valid % between 0.1 and 100.")
+            await message.answer(t(lang, "invalid_risk"), parse_mode="HTML")
             return
         await state.update_data(risk_percent=risk_percent)
         await message.answer(
-            f"✅ Risk: <b>{risk_percent}%</b>\n\n"
-            f"📊 Select timeframe for ATR calculation:",
+            t(lang, "risk_selected_timeframe", risk=risk_percent),
             parse_mode="HTML",
             reply_markup=get_timeframe_keyboard()
         )
 
     @dp.callback_query(F.data.startswith("tf:"))
     async def process_timeframe(callback: CallbackQuery, state: FSMContext):
+        lang = get_lang(callback.from_user.id)
         timeframe = callback.data.split(":")[1]
         data = await state.get_data()
         loading = await callback.message.edit_text(
-            f"⏳ Calculating <b>{data['symbol']}</b> setup ({timeframe})...",
+            t(lang, "calculating", symbol=data["symbol"], timeframe=timeframe),
             parse_mode="HTML"
         )
         try:
@@ -416,11 +435,11 @@ def register_handlers():
                 risk_percent=data["risk_percent"],
                 timeframe=timeframe,
             )
-            await loading.edit_text(setup.format_recommendation(), parse_mode="HTML")
+            await loading.edit_text(setup.format_recommendation(lang), parse_mode="HTML")
         except Exception as e:
             logger.error(f"Calculation error: {e}")
             await loading.edit_text(
-                f"❌ <b>Error:</b> <code>{str(e)}</code>\n\nTry /newtrade again.",
+                t(lang, "calc_error", error=str(e)),
                 parse_mode="HTML"
             )
         await state.clear()
@@ -428,32 +447,23 @@ def register_handlers():
 
     @dp.message(Command("help"))
     async def cmd_help(message: Message):
-        await message.answer(
-            "<b>📖 How to use:</b>\n\n"
-            "1. /newtrade\n"
-            "2. Enter symbol (BTC, ETH, SOL)\n"
-            "3. Select LONG or SHORT\n"
-            "4. Enter entry price or \"market\"\n"
-            "5. Select risk %\n"
-            "6. Choose timeframe\n\n"
-            "<b>🧮 Formula:</b>\n"
-            "<code>Leverage = Risk% / SL Distance%</code>\n\n"
-            "<b>⚠️ Warning:</b> High leverage increases risk. Always use stop-losses.",
-            parse_mode="HTML"
-        )
+        lang = get_lang(message.from_user.id)
+        await message.answer(t(lang, "help_text"), parse_mode="HTML")
 
     @dp.message(Command("price"))
     async def cmd_price(message: Message):
+        lang = get_lang(message.from_user.id)
         args = message.text.split()
         if len(args) < 2:
-            await message.answer("Usage: /price <symbol>\nExample: /price BTC")
+            await message.answer(t(lang, "price_usage"), parse_mode="HTML")
             return
+        symbol = args[1].upper()
         try:
-            ticker = risk_engine.kucoin.get_ticker(args[1].upper())
+            ticker = risk_engine.kucoin.get_ticker(symbol)
             price = float(ticker.get("price", 0))
             await message.answer(
-                f"📊 <b>{args[1].upper()}</b> Futures: <code>{price:,.8f}</code> USDT",
+                t(lang, "price_result", symbol=symbol, price=price),
                 parse_mode="HTML"
             )
         except Exception:
-            await message.answer(f"❌ Could not fetch price for {args[1].upper()}")
+            await message.answer(t(lang, "price_fail", symbol=symbol), parse_mode="HTML")
