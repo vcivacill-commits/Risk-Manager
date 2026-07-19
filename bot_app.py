@@ -81,7 +81,7 @@ class KuCoinFuturesData:
         candles = self.client.get_kline_data(
             symbol=kucoin_symbol, granularity=granularity, begin_t=None, end_t=None
         )
-        df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
         df = df.astype(float)
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         return df.sort_values("timestamp").reset_index(drop=True)
