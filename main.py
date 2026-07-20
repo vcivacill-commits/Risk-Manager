@@ -19,7 +19,7 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 logger.info(f"TELEGRAM_BOT_TOKEN set: {bool(TELEGRAM_BOT_TOKEN)}")
 
-from bot_app import dp, create_bot, register_handlers
+from bot_app import dp, create_bot, register_handlers, set_bot_commands
 logger.info("bot_app imported successfully")
 
 from fastapi import FastAPI, Request, Response
@@ -87,6 +87,7 @@ async def setup_webhook(request: Request):
             secret_token=WEBHOOK_SECRET if WEBHOOK_SECRET else None,
             drop_pending_updates=True
         )
+        await set_bot_commands(bot)
         
         info = await bot.get_webhook_info()
         logger.info(f"Webhook info: {info}")
