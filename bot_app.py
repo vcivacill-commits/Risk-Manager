@@ -69,6 +69,7 @@ class TradeSetup:
     leverage: int
     position_size_usd: float
     actual_loss_if_sl_hit: float
+    expected_profit_if_tp_hit: float
     rr_ratio: float
     sl_distance_percent: float
 
@@ -90,6 +91,7 @@ class TradeSetup:
             leverage=self.leverage,
             position_size_usd=self.position_size_usd,
             actual_loss_if_sl_hit=self.actual_loss_if_sl_hit,
+            expected_profit_if_tp_hit=self.expected_profit_if_tp_hit,
             rr_ratio=self.rr_ratio,
         )
 
@@ -206,6 +208,8 @@ class RiskEngine:
         actual_loss_if_sl_hit = position_size_usd * (sl_distance_percent / 100)
 
         tp_distance = abs(take_profit - entry_price)
+        tp_distance_percent = (tp_distance / entry_price) * 100
+        expected_profit_if_tp_hit = position_size_usd * (tp_distance_percent / 100)
         rr_ratio = tp_distance / sl_distance if sl_distance > 0 else 0
 
         return TradeSetup(
@@ -221,6 +225,7 @@ class RiskEngine:
             leverage=leverage,
             position_size_usd=round(position_size_usd, 2),
             actual_loss_if_sl_hit=round(actual_loss_if_sl_hit, 2),
+            expected_profit_if_tp_hit=round(expected_profit_if_tp_hit, 2),
             rr_ratio=round(rr_ratio, 2),
             sl_distance_percent=round(sl_distance_percent, 4),
         )
