@@ -48,6 +48,13 @@ def get_lang(user_id: int) -> str:
     return user_languages.get(user_id, DEFAULT_LANG)
 
 
+# message_id of the most recent completed-trade result bubble per user. Used
+# by `navigate()` to know when a callback is about to overwrite a finished
+# trade recommendation, so that trade can be preserved as a permanent,
+# read-only message instead of being edited away.
+result_message_ids: Dict[int, int] = {}
+
+
 @dataclass
 class TradeSetup:
     symbol: str
@@ -362,6 +369,31 @@ def get_back_to_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
     ])
 
 
+async def navigate(
+    callback: CallbackQuery,
+    text: str,
+    keyboard: Optional[InlineKeyboardMarkup] = None,
+    parse_mode: Optional[str] = "HTML",
+) -> Message:
+    """
+    Move to a new screen in response to an inline button press.
+
+    If the message currently on screen is a completed trade result, it is
+    left alone (its buttons are cleared so it reads as an archived record)
+    and the new screen is sent as a fresh message underneath it, so the
+    trade stays visible for later review. Ordinary menu/step screens are
+    still edited in place, so plain navigation doesn't spam extra messages.
+    """
+    user_id = callback.from_user.id
+    if result_message_ids.get(user_id) == callback.message.message_id:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return await callback.message.answer(text, parse_mode=parse_mode, reply_markup=keyboard)
+    return await callback.message.edit_text(text, parse_mode=parse_mode, reply_markup=keyboard)
+
+
 class TradeStates(StatesGroup):
     waiting_for_symbol = State()
     waiting_for_entry = State()
@@ -438,16 +470,14 @@ def register_handlers():
         await state.clear()
         lang = get_lang(callback.from_user.id)
         await state.set_state(TradeStates.waiting_for_symbol)
-        await callback.message.edit_text(t(lang, "step1_symbol"), parse_mode="HTML", reply_markup=get_cancel_keyboard(lang))
+        await navigate(callback, t(lang, "step1_symbol"), get_cancel_keyboard(lang))
         await callback.answer()
 
     @dp.callback_query(F.data == "menu:main")
     async def cb_main_menu(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         lang = get_lang(callback.from_user.id)
-        await callback.message.edit_text(
-            t(lang, "main_menu_title"), parse_mode="HTML", reply_markup=get_main_menu_keyboard(lang)
-        )
+        await navigate(callback, t(lang, "main_menu_title"), get_main_menu_keyboard(lang))
         await callback.answer()
 
     @dp.callback_query(F.data == "menu:cancel")
@@ -471,7 +501,7 @@ def register_handlers():
     @dp.callback_query(F.data == "menu:language")
     async def cb_language(callback: CallbackQuery):
         lang = get_lang(callback.from_user.id)
-        await callback.message.edit_text(t(lang, "lang_prompt"), reply_markup=get_language_keyboard())
+        await navigate(callback, t(lang, "lang_prompt"), get_language_keyboard(), parse_mode=None)
         await callback.answer()
 
     @dp.callback_query(F.data == "menu:price")
@@ -626,7 +656,10 @@ def register_handlers():
                 timeframe=data["timeframe"],
             )
             last_trade_params[user_id] = dict(data)
-            await edit_target(setup.format_recommendation(lang), parse_mode="HTML", reply_markup=get_post_result_keyboard(lang))
+            result_msg = await edit_target(
+                setup.format_recommendation(lang), parse_mode="HTML", reply_markup=get_post_result_keyboard(lang)
+            )
+            result_message_ids[user_id] = result_msg.message_id
         except Exception as e:
             logger.error(f"Calculation error: {e}")
             await edit_target(t(lang, "calc_error", error=str(e)), parse_mode="HTML", reply_markup=get_back_to_menu_keyboard(lang))
@@ -649,13 +682,11 @@ def register_handlers():
         lang = get_lang(callback.from_user.id)
         data = last_trade_params.get(callback.from_user.id)
         if not data:
-            await callback.message.edit_text(
-                t(lang, "recalc_no_previous"), parse_mode="HTML", reply_markup=get_main_menu_keyboard(lang)
-            )
+            await navigate(callback, t(lang, "recalc_no_previous"), get_main_menu_keyboard(lang))
             await callback.answer()
             return
-        loading = await callback.message.edit_text(
-            t(lang, "calculating", symbol=data["symbol"], timeframe=data["timeframe"]), parse_mode="HTML"
+        loading = await navigate(
+            callback, t(lang, "calculating", symbol=data["symbol"], timeframe=data["timeframe"])
         )
         await run_calculation(callback.from_user.id, data, lang, loading.edit_text)
         await callback.answer()
