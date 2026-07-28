@@ -26,14 +26,17 @@ LOCALES: Dict[str, Dict[str, str]] = {
         "welcome": (
             "👋 <b>Welcome to the KuCoin Futures Risk Manager!</b>\n\n"
             "I calculate optimal leverage, stop-loss, and take-profit using "
-            "ATR-based support/resistance from KuCoin Futures data.\n\n"
+            "ATR-based support/resistance from KuCoin Futures data — for "
+            "crypto, metals, and stock perpetuals alike.\n\n"
             "<b>Formula:</b> <code>Leverage = Risk% / SL Distance%</code>\n\n"
             "Use /newtrade to start.\n"
             "Use /language to switch between English and فارسی."
         ),
         "step1_symbol": (
-            "📊 <b>Step 1/5:</b> Enter the cryptocurrency symbol.\n\n"
-            "Examples: <code>BTC</code>, <code>ETH</code>, <code>SOL</code>"
+            "📊 <b>Step 1/5:</b> Enter the symbol (crypto, metal, or stock).\n\n"
+            "Examples: <code>BTC</code>, <code>ETH</code>, <code>SOL</code> (crypto) · "
+            "<code>XAU</code>, <code>SILVER</code> (metals) · "
+            "<code>TSLA</code>, <code>NVDA</code> (stocks)"
         ),
         "current_price": "\n\n📈 Current price: <code>{price:,.8f}</code>",
         "step2_direction": "✅ Symbol: <b>{symbol}</b>{price_text}\n\n📊 <b>Step 2/5:</b> Select direction:",
@@ -65,7 +68,7 @@ LOCALES: Dict[str, Dict[str, str]] = {
         "help_text": (
             "<b>📖 How to use:</b>\n\n"
             "1. /newtrade\n"
-            "2. Enter symbol (BTC, ETH, SOL)\n"
+            "2. Enter symbol — crypto (BTC, ETH), metal (XAU, SILVER), or stock (TSLA, NVDA)\n"
             "3. Select LONG or SHORT\n"
             "4. Enter entry price or \"market\"\n"
             "5. Enter account balance\n"
@@ -76,7 +79,7 @@ LOCALES: Dict[str, Dict[str, str]] = {
             "<b>⚠️ Warning:</b> High leverage increases risk. Always use stop-losses.\n\n"
             "Use /language to switch between English and فارسی."
         ),
-        "price_usage": "Usage: /price <symbol>\nExample: /price BTC",
+        "price_usage": "Usage: /price <symbol>\nExamples: /price BTC · /price XAU · /price TSLA",
         "price_result": "📊 <b>{symbol}</b> Futures: <code>{price:,.8f}</code> USDT",
         "price_fail": "❌ Could not fetch price for {symbol}",
         "lang_prompt": "🌐 Choose your language / زبان خود را انتخاب کنید:",
@@ -94,7 +97,7 @@ LOCALES: Dict[str, Dict[str, str]] = {
         "btn_check_another": "🔁 Check Another",
         "persistent_btn_new_trade": "📊 New Trade",
         "persistent_btn_menu": "🏠 Menu",
-        "price_check_prompt": "💲 Enter a symbol to check its price:\n\nExamples: <code>BTC</code>, <code>ETH</code>, <code>SOL</code>",
+        "price_check_prompt": "💲 Enter a symbol to check its price (crypto, metal, or stock):\n\nExamples: <code>BTC</code>, <code>XAU</code>, <code>TSLA</code>",
         "price_check_invalid": "❌ Could not find that symbol. Try again, e.g. <code>BTC</code>",
         "recalc_no_previous": "⚠️ No previous trade to recalculate. Start a new one below.",
         "cancelled": "❌ Cancelled.",
@@ -128,14 +131,17 @@ LOCALES: Dict[str, Dict[str, str]] = {
         "welcome": (
             "👋 <b>به ربات مدیریت ریسک فیوچرز کوکوین خوش آمدید!</b>\n\n"
             "من با استفاده از سطوح حمایت و مقاومت مبتنی بر ATR از داده‌های فیوچرز کوکوین، "
-            "اهرم، حد ضرر و حد سود بهینه را محاسبه می‌کنم.\n\n"
+            "اهرم، حد ضرر و حد سود بهینه را محاسبه می‌کنم — برای فیوچرز ارز دیجیتال، فلزات "
+            "گران‌بها و سهام.\n\n"
             "<b>فرمول:</b> <code>اهرم = درصد ریسک / درصد فاصله حد ضرر</code>\n\n"
             "برای شروع از دستور /newtrade استفاده کنید.\n"
             "برای تغییر زبان از دستور /language استفاده کنید."
         ),
         "step1_symbol": (
-            "📊 <b>مرحله ۱ از ۵:</b> نماد ارز دیجیتال را وارد کنید.\n\n"
-            "مثال‌ها: <code>BTC</code>، <code>ETH</code>، <code>SOL</code>"
+            "📊 <b>مرحله ۱ از ۵:</b> نماد را وارد کنید (ارز دیجیتال، فلز، یا سهام).\n\n"
+            "مثال‌ها: <code>BTC</code>، <code>ETH</code>، <code>SOL</code> (ارز دیجیتال) · "
+            "<code>XAU</code>، <code>SILVER</code> (فلزات) · "
+            "<code>TSLA</code>، <code>NVDA</code> (سهام)"
         ),
         "current_price": "\n\n📈 قیمت فعلی: <code>{price:,.8f}</code>",
         "step2_direction": "✅ نماد: <b>{symbol}</b>{price_text}\n\n📊 <b>مرحله ۲ از ۵:</b> جهت معامله را انتخاب کنید:",
@@ -167,7 +173,7 @@ LOCALES: Dict[str, Dict[str, str]] = {
         "help_text": (
             "<b>📖 راهنمای استفاده:</b>\n\n"
             "۱. /newtrade\n"
-            "۲. نماد را وارد کنید (BTC، ETH، SOL)\n"
+            "۲. نماد را وارد کنید — ارز دیجیتال (BTC، ETH)، فلز (XAU، SILVER)، یا سهام (TSLA، NVDA)\n"
             "۳. LONG یا SHORT را انتخاب کنید\n"
             "۴. قیمت ورود یا «market» را وارد کنید\n"
             "۵. موجودی حساب را وارد کنید\n"
@@ -178,7 +184,7 @@ LOCALES: Dict[str, Dict[str, str]] = {
             "<b>⚠️ هشدار:</b> اهرم بالا ریسک را افزایش می‌دهد. همیشه از حد ضرر استفاده کنید.\n\n"
             "برای تغییر زبان از دستور /language استفاده کنید."
         ),
-        "price_usage": "روش استفاده: /price <نماد>\nمثال: /price BTC",
+        "price_usage": "روش استفاده: /price <نماد>\nمثال‌ها: /price BTC · /price XAU · /price TSLA",
         "price_result": "📊 فیوچرز <b>{symbol}</b>: <code>{price:,.8f}</code> USDT",
         "price_fail": "❌ دریافت قیمت برای {symbol} ممکن نشد",
         "lang_prompt": "🌐 Choose your language / زبان خود را انتخاب کنید:",
@@ -196,7 +202,7 @@ LOCALES: Dict[str, Dict[str, str]] = {
         "btn_check_another": "🔁 بررسی نماد دیگر",
         "persistent_btn_new_trade": "📊 معامله جدید",
         "persistent_btn_menu": "🏠 منو",
-        "price_check_prompt": "💲 نماد مورد نظر برای بررسی قیمت را وارد کنید:\n\nمثال‌ها: <code>BTC</code>، <code>ETH</code>، <code>SOL</code>",
+        "price_check_prompt": "💲 نماد مورد نظر برای بررسی قیمت را وارد کنید (ارز دیجیتال، فلز، یا سهام):\n\nمثال‌ها: <code>BTC</code>، <code>XAU</code>، <code>TSLA</code>",
         "price_check_invalid": "❌ این نماد یافت نشد. دوباره تلاش کنید، مثلاً <code>BTC</code>",
         "recalc_no_previous": "⚠️ معامله قبلی برای محاسبه مجدد وجود ندارد. یک معامله جدید را از پایین شروع کنید.",
         "cancelled": "❌ لغو شد.",
