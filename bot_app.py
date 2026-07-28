@@ -5,9 +5,10 @@ Contains all handlers, risk engine, KuCoin client, and state management.
 """
 
 import os
+import time
 import logging
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -97,8 +98,90 @@ class TradeSetup:
 
 
 class KuCoinFuturesData:
+    """
+    Market-data access layer backed entirely by KuCoin Futures.
+
+    KuCoin Futures lists three families of instruments under one shared
+    contract namespace, all served by the same REST endpoints:
+      - crypto perpetuals, e.g. XBTUSDTM, ETHUSDTM, SOLUSDTM
+      - precious-metal perpetuals, e.g. XAUTUSDTM (gold), XAGUSDTM (silver)
+      - stock-linked perpetuals, e.g. TSLAUSDTM, NVDAUSDTM, MSTRUSDTM
+    Since KuCoin provides candles, tickers, and pricing for all three asset
+    classes through this one API, no other data source (Yahoo Finance,
+    yfinance, etc.) is needed or used anywhere in this bot.
+    """
+
+    # A few tickers where the KuCoin contract root doesn't match what people
+    # naturally type. Everything else is resolved dynamically below against
+    # KuCoin's live contract list, so new metals/stocks/crypto that KuCoin
+    # lists in the future work automatically without code changes.
+    SYMBOL_ALIASES = {
+        "BTC": "XBT",                    # crypto: KuCoin uses the legacy XBT ticker
+        "GOLD": "XAUT", "XAU": "XAUT",   # metals: gold perp tracks Tether Gold
+        "SILVER": "XAG",
+    }
+
+    CONTRACT_LIST_TTL_SECONDS = 3600  # contract list changes rarely; cache it
+
     def __init__(self):
         self.client = FuturesMarket()
+        self._contracts_cache: Optional[Dict[str, dict]] = None
+        self._contracts_cache_ts: float = 0.0
+
+    def _load_active_contracts(self) -> Dict[str, dict]:
+        """Fetch (and cache) every open KuCoin Futures contract, keyed by
+        its exact symbol (e.g. 'XBTUSDTM', 'XAUTUSDTM', 'TSLAUSDTM').
+        This single list spans crypto, metals, and stocks, and is what lets
+        us resolve any of them without a hardcoded per-asset symbol table."""
+        now = time.time()
+        if self._contracts_cache is not None and (now - self._contracts_cache_ts) < self.CONTRACT_LIST_TTL_SECONDS:
+            return self._contracts_cache
+        contracts: List[dict] = self.client.get_contracts_list()
+        by_symbol = {c["symbol"].upper(): c for c in contracts if c.get("symbol")}
+        self._contracts_cache = by_symbol
+        self._contracts_cache_ts = now
+        return by_symbol
+
+    def _normalize_symbol(self, symbol: str) -> str:
+        raw = symbol.upper().replace("/", "").replace("-", "").replace(" ", "")
+
+        # Already a fully-qualified KuCoin Futures contract symbol.
+        if raw.endswith("USDTM") or raw.endswith("USDM"):
+            return raw
+
+        base = raw
+        for suffix in ("USDT", "USD"):
+            if base.endswith(suffix) and len(base) > len(suffix):
+                base = base[: -len(suffix)]
+                break
+        base = self.SYMBOL_ALIASES.get(base, base)
+
+        try:
+            contracts = self._load_active_contracts()
+        except Exception:
+            logger.warning("Could not fetch KuCoin Futures contract list; falling back to naming convention.")
+            contracts = {}
+
+        # Exact contract-symbol match (covers crypto, metals, and stocks alike).
+        if f"{base}USDTM" in contracts:
+            return f"{base}USDTM"
+        if f"{base}USDM" in contracts:
+            return f"{base}USDM"
+
+        # Match by base currency across all active contracts (crypto, metal,
+        # or stock), preferring the USDT-margined perpetual.
+        if contracts:
+            matches = [c["symbol"] for c in contracts.values() if c.get("baseCurrency", "").upper() == base]
+            usdt_matches = [s for s in matches if s.endswith("USDTM")]
+            if usdt_matches:
+                return usdt_matches[0]
+            if matches:
+                return matches[0]
+
+        # Fallback: KuCoin's standard USDT-margined-perpetual naming
+        # convention, which holds across crypto, metals, and stocks
+        # (e.g. ETHUSDTM, XAUTUSDTM, TSLAUSDTM).
+        return f"{base}USDTM"
 
     def get_klines(self, symbol: str, granularity: int = 3600, limit: int = 100) -> pd.DataFrame:
         kucoin_symbol = self._normalize_symbol(symbol)
@@ -109,19 +192,6 @@ class KuCoinFuturesData:
         df = df.astype(float)
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         return df.sort_values("timestamp").reset_index(drop=True)
-
-    def _normalize_symbol(self, symbol: str) -> str:
-        symbol = symbol.upper().replace("/", "").replace("-", "")
-        mappings = {
-            "BTC": "XBTUSDTM", "ETH": "ETHUSDTM", "SOL": "SOLUSDTM",
-            "XRP": "XRPUSDTM", "DOGE": "DOGEUSDTM", "ADA": "ADAUSDTM",
-            "AVAX": "AVAXUSDTM", "LINK": "LINKUSDTM", "MATIC": "MATICUSDTM",
-            "DOT": "DOTUSDTM",
-        }
-        if symbol.endswith("USDM") or symbol.endswith("USDTM"):
-            return symbol
-        base = symbol.replace("USDT", "").replace("USD", "")
-        return mappings.get(base, f"{base}USDTM")
 
     def get_ticker(self, symbol: str) -> Dict[str, Any]:
         return self.client.get_ticker(self._normalize_symbol(symbol))
